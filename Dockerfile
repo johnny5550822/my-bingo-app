@@ -1,0 +1,15 @@
+## Multi-stage Dockerfile: build with Node, serve with nginx
+FROM node:18-alpine AS builder
+WORKDIR /app
+
+# copy package files first for better caching
+COPY package.json package-lock.json* ./
+RUN npm ci --silent || npm install --silent
+
+COPY . .
+RUN npm run build
+
+FROM nginx:stable-alpine
+COPY --from=builder /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
