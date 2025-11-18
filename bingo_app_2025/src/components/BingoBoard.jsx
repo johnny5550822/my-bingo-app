@@ -124,56 +124,117 @@ export default function BingoBoard({ items = [], gridSize = 5, seed = 0, freeCen
     // text styles: scale with cell
     ctx.fillStyle = themeObj.textColor
     const baseFontSize = Math.max(12, Math.floor(cell * 0.14))
-    ctx.font = `bold ${baseFontSize}px ${themeObj.font || 'sans-serif'}`
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
 
     const maxTextWidth = cell * 0.8
-    const lineHeight = Math.max(16, Math.floor(baseFontSize * 1.2))
+    const maxTextHeight = cell - cellPadding * 2
 
     for (let r = 0; r < gridSize; r++) {
       for (let c = 0; c < gridSize; c++) {
         const txt = board[r * gridSize + c] || ''
         const cx = c * cell + cell / 2
         const cy = titleAreaHeight + r * cell + cell / 2
-        drawWrappedText(ctx, String(txt), cx, cy, maxTextWidth, lineHeight)
+        drawWrappedText(ctx, String(txt), cx, cy, maxTextWidth, maxTextHeight, baseFontSize, themeObj.font)
       }
     }
   }, [board, gridSize])
 
-  function drawWrappedText(ctx, text, x, y, maxWidth, lineHeight) {
+  function drawWrappedText(ctx, text, x, y, maxWidth, maxHeight, startingFontSize, fontFamily) {
     if (!text) return
-    const words = text.split(' ')
-    const lines = []
-    let line = ''
-    for (let i = 0; i < words.length; i++) {
-      const testLine = line ? `${line} ${words[i]}` : words[i]
-      const metrics = ctx.measureText(testLine)
-      if (metrics.width > maxWidth && line) {
-        lines.push(line)
-        line = words[i]
-      } else {
-        line = testLine
-      }
-    }
-    if (line) lines.push(line)
 
-    // If still too wide for single-word overflow, break long words
-    for (let i = 0; i < lines.length; i++) {
-      while (ctx.measureText(lines[i]).width > maxWidth) {
-        // force split
-        const l = lines[i]
-        const splitAt = Math.floor(l.length * 0.6) || 1
-        const a = l.slice(0, splitAt)
-        const b = l.slice(splitAt)
-        lines.splice(i, 1, a, b)
+    fontFamily = fontFamily || 'sans-serif'
+    const minFontSize = 10
+
+    function splitLongWord(ctx, word, maxW) {
+      const parts = []
+      let rest = word
+      while (rest.length > 0) {
+        // binary search for the largest substring that fits
+        let lo = 1
+        let hi = rest.length
+        let fit = ''
+        while (lo <= hi) {
+          const mid = Math.floor((lo + hi) / 2)
+          const substr = rest.slice(0, mid)
+          if (ctx.measureText(substr).width <= maxW) {
+            fit = substr
+            lo = mid + 1
+          } else {
+            hi = mid - 1
+          }
+        }
+        if (!fit) {
+          // force at least one char to avoid infinite loop
+          fit = rest.slice(0, 1)
+        }
+        parts.push(fit)
+        rest = rest.slice(fit.length)
       }
+      return parts
     }
 
-    const totalHeight = lines.length * lineHeight
-    const startY = y - totalHeight / 2 + lineHeight / 2
-    for (let i = 0; i < lines.length; i++) {
-      ctx.fillText(lines[i], x, startY + i * lineHeight)
+    function wrapWithFont(ctx, text, fontSize) {
+      ctx.font = `bold ${fontSize}px ${fontFamily}`
+      const words = text.split(' ')
+      const lines = []
+      let line = ''
+      for (let i = 0; i < words.length; i++) {
+        const word = words[i]
+        const testLine = line ? `${line} ${word}` : word
+        if (ctx.measureText(testLine).width <= maxWidth) {
+          line = testLine
+        } else {
+          if (line) lines.push(line)
+          // if single word too long, split it
+          if (ctx.measureText(word).width > maxWidth) {
+            const parts = splitLongWord(ctx, word, maxWidth)
+            for (let p = 0; p < parts.length; p++) {
+              if (p === 0) {
+                line = parts[p]
+              } else {
+                lines.push(line)
+                line = parts[p]
+              }
+            }
+          } else {
+            line = word
+          }
+        }
+      }
+      if (line) lines.push(line)
+      const lineHeight = Math.max(14, Math.ceil(fontSize * 1.15))
+      return { lines, lineHeight }
+    }
+
+    // try shrinking font until content fits vertically
+    let fontSize = startingFontSize
+    let wrapped = wrapWithFont(ctx, text, fontSize)
+    while ((wrapped.lines.length * wrapped.lineHeight) > maxHeight && fontSize > minFontSize) {
+      fontSize -= 1
+      wrapped = wrapWithFont(ctx, text, fontSize)
+    }
+
+    // if still doesn't fit, truncate lines to available space and add ellipsis
+    const maxLines = Math.floor(maxHeight / wrapped.lineHeight) || 1
+    let linesToDraw = wrapped.lines
+    if (linesToDraw.length > maxLines) {
+      linesToDraw = linesToDraw.slice(0, maxLines)
+      // ellipsize last line to fit
+      let last = linesToDraw[linesToDraw.length - 1]
+      ctx.font = `bold ${fontSize}px ${fontFamily}`
+      while (ctx.measureText(last + '…').width > maxWidth && last.length > 0) {
+        last = last.slice(0, -1)
+      }
+      linesToDraw[linesToDraw.length - 1] = last + '…'
+    }
+
+    // draw
+    ctx.font = `bold ${fontSize}px ${fontFamily}`
+    const totalHeight = linesToDraw.length * wrapped.lineHeight
+    const startY = y - totalHeight / 2 + wrapped.lineHeight / 2
+    for (let i = 0; i < linesToDraw.length; i++) {
+      ctx.fillText(linesToDraw[i], x, startY + i * wrapped.lineHeight)
     }
   }
 
